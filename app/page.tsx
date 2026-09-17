@@ -1,12 +1,37 @@
+"use client";
+
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+
+declare global {
+  interface Window {
+    fbq?: (...args: unknown[]) => void;
+  }
+}
+
 const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME!;
 
-export default function EbookLandingPage() {
+// Only letters/digits allowed — Telegram's start param rejects anything else
+function getSourceTag(searchParams: URLSearchParams): string {
+  const fbclid = searchParams.get("fbclid");
+  const utmSource = searchParams.get("utm_source");
+  const utmMedium = searchParams.get("utm_medium");
+
+  if (fbclid || utmMedium === "paid") {
+    if (utmSource === "ig") return "metaig";
+    if (utmSource === "fb") return "metafb";
+    return "metaad";
+  }
+  return "organic";
+}
+
+function EbookLandingPageInner() {
+  const searchParams = useSearchParams();
+  const sourceTag = getSourceTag(searchParams);
+
   return (
     <main className="relative min-h-screen bg-[#030406] text-[#ECEEF0] font-[family-name:var(--font-body)] overflow-hidden flex items-center justify-center selection:bg-[#D4AF37] selection:text-black">
       
-      {/* ========================================= */}
-      {/* --- HIGH-DETAIL PREMIUM BACKGROUND --- */}
-      {/* ========================================= */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[100vw] h-[60vh] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#D4AF37]/15 via-transparent to-transparent pointer-events-none z-0"></div>
       <div className="absolute top-[10%] left-[-20%] w-[150%] h-[15vh] bg-gradient-to-r from-transparent via-[#D4AF37]/5 to-transparent -rotate-12 blur-2xl pointer-events-none z-0"></div>
       <div className="absolute top-[60%] right-[-20%] w-[150%] h-[20vh] bg-gradient-to-r from-transparent via-[#FFFFFF]/5 to-transparent rotate-12 blur-3xl pointer-events-none z-0"></div>
@@ -27,12 +52,10 @@ export default function EbookLandingPage() {
         <div className="w-[1px] h-[50vh] mt-auto bg-gradient-to-t from-[#D4AF37]/30 to-transparent mr-10"></div>
       </div>
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_40%,#030406_120%)] pointer-events-none z-0"></div>
-      {/* ========================================= */}
 
       <div className="relative w-full max-w-[1250px] mx-auto px-4 sm:px-6 py-12 lg:py-16 z-10">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-8 items-center">
           
-          {/* --- Typography & Text Content (Left Column) --- */}
           <div className="max-w-[580px] relative z-20 mx-auto lg:mx-0 text-center lg:text-left">
             <div className="flex items-center justify-center lg:justify-start gap-3 mb-6">
               <div className="h-[2px] w-10 bg-gradient-to-r from-[#D4AF37] to-transparent"></div>
@@ -41,7 +64,6 @@ export default function EbookLandingPage() {
               </span>
             </div>
 
-            {/* Responsive Heading */}
             <h1 className="font-[family-name:var(--font-display)] text-[2.5rem] sm:text-[3.25rem] lg:text-[3.75rem] leading-[1.1] sm:leading-[1.05] font-light text-white mb-6 tracking-tight">
               Mindset <span className="font-semibold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF4D0] via-[#D4AF37] to-[#AA8529]">Master</span> Karein.<br />
               <span className="italic text-[#8992A0]">Confident</span> Trader Banein.
@@ -53,9 +75,10 @@ export default function EbookLandingPage() {
 
             <div className="flex flex-col sm:flex-row gap-6 items-center lg:items-start justify-center lg:justify-start">
               <a
-                href={`https://t.me/${BOT_USERNAME}?start=web`}
+                href={`https://t.me/${BOT_USERNAME}?start=${sourceTag}`}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => window.fbq?.("track", "Lead")}
                 className="group w-full sm:w-auto relative inline-flex items-center justify-center bg-gradient-to-r from-[#D4AF37] via-[#F9F1CC] to-[#D4AF37] text-black font-semibold text-[1.1rem] px-8 py-3.5 rounded-md transition-all hover:brightness-110 shadow-[0_0_30px_rgba(212,175,55,0.25)] border border-[#FFF4D0]/50"
               >
                 <span className="mr-3">Get Ebook on Telegram</span>
@@ -63,22 +86,17 @@ export default function EbookLandingPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
                 </svg>
               </a>
-
-           
             </div>
           </div>
 
-          {/* --- Image & Points Column (Right Column - Stacked) --- */}
           <div className="relative w-full flex flex-col items-center lg:items-end z-20 mt-4 lg:mt-0">
             
-            {/* Responsive Image Section */}
             <div className="relative w-full max-w-[280px] sm:max-w-[380px] lg:max-w-[457px] mb-8 lg:mb-6">
               <div className="absolute -top-2 -left-2 w-4 h-4 border-t-2 border-l-2 border-[#D4AF37] z-20"></div>
               <div className="absolute -top-2 -right-2 w-4 h-4 border-t-2 border-r-2 border-[#D4AF37] z-20"></div>
               <div className="absolute -bottom-2 -left-2 w-4 h-4 border-b-2 border-l-2 border-[#D4AF37] z-20"></div>
               <div className="absolute -bottom-2 -right-2 w-4 h-4 border-b-2 border-r-2 border-[#D4AF37] z-20"></div>
 
-              {/* Adjusted left position for mobile so it doesn't clip */}
               <div className="absolute -left-2 sm:-left-5 top-4 sm:top-6 bg-[#121418]/90 backdrop-blur-md border border-white/10 px-2 sm:px-3 py-1.5 sm:py-2 rounded-sm shadow-2xl z-30 flex items-center gap-2">
                 <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-[#D4AF37]/10 flex items-center justify-center border border-[#D4AF37]/30">
                   <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#D4AF37]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -100,7 +118,6 @@ export default function EbookLandingPage() {
               </div>
             </div>
 
-            {/* --- What you will get heading --- */}
             <div className="w-full max-w-[480px] flex items-center gap-3 mb-4 justify-center lg:justify-start">
               <span className="text-[#D4AF37] text-[0.6rem] sm:text-[0.65rem] font-bold tracking-[0.2em] uppercase text-center lg:text-left">
                 What you will get in this ebook
@@ -108,10 +125,8 @@ export default function EbookLandingPage() {
               <div className="hidden sm:block h-[1px] flex-1 bg-gradient-to-r from-[#D4AF37]/40 to-transparent"></div>
             </div>
 
-            {/* Responsive 2x2 Grid for Points */}
             <div className="w-full max-w-[480px] grid grid-cols-1 sm:grid-cols-2 gap-3">
               
-              {/* Point 1 */}
               <div className="bg-[#0A0C0F]/80 backdrop-blur-sm border border-white/5 p-3 rounded-lg flex items-start gap-3 hover:border-[#D4AF37]/30 transition-colors">
                 <div className="mt-0.5 w-7 h-7 shrink-0 rounded-full bg-gradient-to-br from-[#D4AF37]/20 to-transparent flex items-center justify-center border border-[#D4AF37]/20">
                   <svg className="w-3.5 h-3.5 text-[#D4AF37]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -119,11 +134,10 @@ export default function EbookLandingPage() {
                   </svg>
                 </div>
                 <div>
-                  <h3 className="text-white text-[0.85rem] font-semibold mb-0.5 leading-tight">A Trader’s Journey — From Beginner to Pro</h3>
+                  <h3 className="text-white text-[0.85rem] font-semibold mb-0.5 leading-tight">A Trader's Journey — From Beginner to Pro</h3>
                 </div>
               </div>
 
-              {/* Point 2 */}
               <div className="bg-[#0A0C0F]/80 backdrop-blur-sm border border-white/5 p-3 rounded-lg flex items-start gap-3 hover:border-[#D4AF37]/30 transition-colors">
                 <div className="mt-0.5 w-7 h-7 shrink-0 rounded-full bg-gradient-to-br from-[#D4AF37]/20 to-transparent flex items-center justify-center border border-[#D4AF37]/20">
                   <svg className="w-3.5 h-3.5 text-[#D4AF37]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -135,7 +149,6 @@ export default function EbookLandingPage() {
                 </div>
               </div>
 
-              {/* Point 3 */}
               <div className="bg-[#0A0C0F]/80 backdrop-blur-sm border border-white/5 p-3 rounded-lg flex items-start gap-3 hover:border-[#D4AF37]/30 transition-colors">
                 <div className="mt-0.5 w-7 h-7 shrink-0 rounded-full bg-gradient-to-br from-[#D4AF37]/20 to-transparent flex items-center justify-center border border-[#D4AF37]/20">
                   <svg className="w-3.5 h-3.5 text-[#D4AF37]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -147,7 +160,6 @@ export default function EbookLandingPage() {
                 </div>
               </div>
 
-              {/* Point 4 */}
               <div className="bg-[#0A0C0F]/80 backdrop-blur-sm border border-white/5 p-3 rounded-lg flex items-start gap-3 hover:border-[#D4AF37]/30 transition-colors">
                 <div className="mt-0.5 w-7 h-7 shrink-0 rounded-full bg-gradient-to-br from-[#D4AF37]/20 to-transparent flex items-center justify-center border border-[#D4AF37]/20">
                   <svg className="w-3.5 h-3.5 text-[#D4AF37]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -165,5 +177,13 @@ export default function EbookLandingPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function EbookLandingPage() {
+  return (
+    <Suspense fallback={null}>
+      <EbookLandingPageInner />
+    </Suspense>
   );
 }
