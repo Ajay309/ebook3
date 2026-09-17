@@ -75,7 +75,7 @@ function EbookLandingPageInner() {
 
             <div className="flex flex-col sm:flex-row gap-6 items-center lg:items-start justify-center lg:justify-start">
               <a
-                href={`https://t.me/${BOT_USERNAME}?start=${sourceTag}`}
+               href={`https://t.me/${BOT_USERNAME}?start=${sourceTag}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => window.fbq?.("track", "Lead")}

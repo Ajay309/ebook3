@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isChannelMember } from "@/lib/telegram-auth";
+import { redis } from "@/lib/redis";
 import fs from "fs";
 import path from "path";
 
@@ -8,8 +9,9 @@ const CHANNEL_LINK = process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL_LINK!;
 const EBOOK_PATH = path.join(process.cwd(), "private-files", "ebook.pdf");
 const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// Every Telegram API call now logs its actual response — this is what was
-// missing before: failures were being silently swallowed.
+const KNOWN_SOURCES = ["metaig", "metafb", "metaad", "organic"];
+const SOURCE_TTL_SECONDS = 3600;
+
 async function callTelegram(method: string, body: BodyInit, isJson = true) {
   const res = await fetch(`${TG_API}/${method}`, {
     method: "POST",
@@ -53,6 +55,17 @@ async function sendEbook(chatId: number) {
   return callTelegram("sendDocument", form, false);
 }
 
+async function recordSource(userId: number, rawTag: string) {
+  const tag = KNOWN_SOURCES.includes(rawTag) ? rawTag : "direct";
+  await redis.set(`source:${userId}`, tag, { ex: SOURCE_TTL_SECONDS });
+}
+
+async function recordJoin(userId: number) {
+  const tag = (await redis.get<string>(`source:${userId}`)) ?? "direct";
+  await redis.incr("stats:total");
+  await redis.incr(`stats:source:${tag}`);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
@@ -60,6 +73,13 @@ export async function POST(req: NextRequest) {
 
     if (update.message?.text?.startsWith("/start")) {
       const chatId = update.message.chat.id;
+      const userId = update.message.from.id;
+      const [, rawTag] = update.message.text.split(" ");
+
+      if (rawTag) {
+        await recordSource(userId, rawTag);
+      }
+
       await sendMessage(
         chatId,
         "Welcome! Grab your free ebook — join our channel first, then tap the button below to confirm.",
@@ -85,6 +105,7 @@ export async function POST(req: NextRequest) {
         if (member) {
           await answerCallback(cb.id, "Verified! Sending your ebook...");
           await sendEbook(chatId);
+          await recordJoin(userId);
         } else {
           await answerCallback(
             cb.id,
@@ -99,6 +120,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[webhook] CRASHED:", err);
-    return NextResponse.json({ ok: true }); // still 200 so Telegram doesn't retry-spam
+    return NextResponse.json({ ok: true });
   }
 }
