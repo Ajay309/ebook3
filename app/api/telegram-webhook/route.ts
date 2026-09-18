@@ -61,9 +61,20 @@ async function recordSource(userId: number, rawTag: string) {
 }
 
 async function recordJoin(userId: number) {
+  // Duplicate count rokne ke liye — ek user sirf ek baar count ho
+  const alreadyCounted = await redis.get(`joined:${userId}`);
+  if (alreadyCounted) {
+    console.log(`[recordJoin] userId ${userId} already counted, skipping`);
+    return;
+  }
+
   const tag = (await redis.get<string>(`source:${userId}`)) ?? "direct";
   await redis.incr("stats:total");
   await redis.incr(`stats:source:${tag}`);
+
+  // Permanent flag — dobara count na ho
+  await redis.set(`joined:${userId}`, "1");
+  console.log(`[recordJoin] userId ${userId} counted with source: ${tag}`);
 }
 
 export async function POST(req: NextRequest) {
@@ -71,6 +82,26 @@ export async function POST(req: NextRequest) {
     const update = await req.json();
     console.log("[webhook] update received:", JSON.stringify(update));
 
+    // ✅ Actual channel join event — bot admin hone pe milta hai
+    if (update.my_chat_member) {
+      const member = update.my_chat_member;
+      const newStatus = member.new_chat_member?.status;
+      const oldStatus = member.old_chat_member?.status;
+      const userId = member.from.id;
+
+      const joinedNow =
+        (newStatus === "member" || newStatus === "administrator") &&
+        (oldStatus === "left" || oldStatus === "kicked");
+
+      if (joinedNow) {
+        console.log(`[webhook] user ${userId} actually joined the channel`);
+        await recordJoin(userId);
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start command handle
     if (update.message?.text?.startsWith("/start")) {
       const chatId = update.message.chat.id;
       const userId = update.message.from.id;
@@ -93,6 +124,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // Button tap — sirf ebook delivery, counting nahi
     if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id;
@@ -105,7 +137,7 @@ export async function POST(req: NextRequest) {
         if (member) {
           await answerCallback(cb.id, "Verified! Sending your ebook...");
           await sendEbook(chatId);
-          await recordJoin(userId);
+          // ❌ recordJoin() hata diya — counting my_chat_member se hoti hai ab
         } else {
           await answerCallback(
             cb.id,
