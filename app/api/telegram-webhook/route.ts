@@ -54,16 +54,31 @@ async function recordSource(userId: number, rawTag: string) {
   await redis.set(`source:${userId}`, tag, { ex: SOURCE_TTL_SECONDS });
 }
 
-// Counts a join exactly once per user, and tells the caller whether this
-// was a NEW count (so it knows whether to actually send the ebook).
-async function recordJoinOnce(userId: number): Promise<boolean> {
+async function recordJoinOnce(
+  userId: number,
+  firstName: string,
+  username?: string
+): Promise<boolean> {
   const alreadyCounted = await redis.get(`counted:${userId}`);
   if (alreadyCounted) return false;
 
   const tag = (await redis.get<string>(`source:${userId}`)) ?? "direct";
   await redis.incr("stats:total");
   await redis.incr(`stats:source:${tag}`);
-  await redis.set(`counted:${userId}`, "1"); // no expiry — never double-count
+
+  // User ka pura data save karo
+  await redis.set(
+    `counted:${userId}`,
+    JSON.stringify({
+      userId,
+      firstName,
+      username: username ?? null,
+      source: tag,
+      joinedAt: new Date().toISOString(),
+    })
+  );
+
+  console.log(`[recordJoin] userId ${userId} | name: ${firstName} | source: ${tag}`);
   return true;
 }
 
@@ -72,8 +87,6 @@ export async function POST(req: NextRequest) {
     const update = await req.json();
     console.log("[webhook] update received:", JSON.stringify(update));
 
-    // Someone opened the bot via the deep link (or searched it directly).
-    // Only ONE button now — no second confirmation step.
     if (update.message?.text?.startsWith("/start")) {
       const chatId = update.message.chat.id;
       const userId = update.message.from.id;
@@ -93,27 +106,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Telegram's own signal that someone's membership status changed —
-    // this is what now triggers the ebook, automatically, the moment they
-    // actually join. No button tap needed.
     if (update.chat_member) {
       const { old_chat_member, new_chat_member } = update.chat_member;
       const userId = new_chat_member.user.id;
+      const firstName = new_chat_member.user.first_name ?? "Unknown";
+      const username = new_chat_member.user.username;
 
       const justJoined =
         LEFT_STATUSES.includes(old_chat_member.status) &&
         JOINED_STATUSES.includes(new_chat_member.status);
 
       if (justJoined) {
-        console.log(`[webhook] chat_member: user ${userId} just joined the channel`);
-        const isNewJoin = await recordJoinOnce(userId);
+        console.log(`[webhook] chat_member: user ${userId} (${firstName}) just joined`);
+        const isNewJoin = await recordJoinOnce(userId, firstName, username);
 
         if (isNewJoin) {
-          // Sending to their user ID works because they already started a
-          // private chat with the bot via the deep link. If someone joins
-          // the channel WITHOUT ever messaging the bot first, this send
-          // will fail (Telegram blocks bots from messaging strangers) —
-          // that failure is logged, not thrown, so it won't break anything.
           await sendEbook(userId);
         }
       }

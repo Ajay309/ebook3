@@ -10,10 +10,31 @@ export async function GET(req: NextRequest) {
   }
 
   const total = (await redis.get<number>("stats:total")) ?? 0;
+
   const bySource: Record<string, number> = {};
   for (const source of SOURCES) {
     bySource[source] = (await redis.get<number>(`stats:source:${source}`)) ?? 0;
   }
 
-  return NextResponse.json({ total, bySource });
+  // Joined users list
+  const keys = await redis.keys("counted:*");
+  const joinedUsers = [];
+
+  for (const k of keys) {
+    const raw = await redis.get<string>(k);
+    if (raw) {
+      try {
+        joinedUsers.push(JSON.parse(raw));
+      } catch {
+        // Purane "1" format wale entries skip karo
+      }
+    }
+  }
+
+  // Date ke hisaab se sort karo — latest pehle
+  joinedUsers.sort(
+    (a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime()
+  );
+
+  return NextResponse.json({ total, bySource, joinedUsers });
 }
