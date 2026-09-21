@@ -21,15 +21,20 @@ export async function GET(req: NextRequest) {
   const joinedUsers = [];
 
   for (const k of keys) {
-    const raw = await redis.get<string>(k);
-    if (raw) {
-      try {
-        joinedUsers.push(JSON.parse(raw));
-      } catch {
-        // Purane "1" format wale entries skip karo
+  const raw = await redis.get(k); // <string> type mat lagao
+  if (raw && typeof raw === "object") {
+    joinedUsers.push(raw);
+  } else if (raw && typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        joinedUsers.push(parsed);
       }
+    } catch {
+      // "1" wale purane entries — skip
     }
   }
+}
 
   // Date ke hisaab se sort karo — latest pehle
   joinedUsers.sort(
