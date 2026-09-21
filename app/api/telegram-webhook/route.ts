@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isChannelMember } from "@/lib/telegram-auth";
 import { redis } from "@/lib/redis";
 import fs from "fs";
 import path from "path";
@@ -11,6 +10,8 @@ const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 const KNOWN_SOURCES = ["metaig", "metafb", "metaad", "organic"];
 const SOURCE_TTL_SECONDS = 3600;
+const JOINED_STATUSES = ["member", "administrator", "creator"];
+const LEFT_STATUSES = ["left", "kicked"];
 
 async function callTelegram(method: string, body: BodyInit, isJson = true) {
   const res = await fetch(`${TG_API}/${method}`, {
@@ -34,13 +35,6 @@ async function sendMessage(chatId: number, text: string, replyMarkup?: object) {
   );
 }
 
-async function answerCallback(callbackQueryId: string, text?: string, showAlert = false) {
-  return callTelegram(
-    "answerCallbackQuery",
-    JSON.stringify({ callback_query_id: callbackQueryId, text, show_alert: showAlert })
-  );
-}
-
 async function sendEbook(chatId: number) {
   if (!fs.existsSync(EBOOK_PATH)) {
     console.error(`[sendEbook] ebook.pdf NOT FOUND at ${EBOOK_PATH}`);
@@ -49,7 +43,7 @@ async function sendEbook(chatId: number) {
   const fileBuffer = fs.readFileSync(EBOOK_PATH);
   const form = new FormData();
   form.append("chat_id", String(chatId));
-  form.append("caption", "Here's your free ebook 🎉");
+  form.append("caption", "Thanks for joining! Here's your free ebook 🎉");
   form.append("document", new Blob([fileBuffer]), "ebook.pdf");
 
   return callTelegram("sendDocument", form, false);
@@ -60,21 +54,17 @@ async function recordSource(userId: number, rawTag: string) {
   await redis.set(`source:${userId}`, tag, { ex: SOURCE_TTL_SECONDS });
 }
 
-async function recordJoin(userId: number) {
-  // Duplicate count rokne ke liye — ek user sirf ek baar count ho
-  const alreadyCounted = await redis.get(`joined:${userId}`);
-  if (alreadyCounted) {
-    console.log(`[recordJoin] userId ${userId} already counted, skipping`);
-    return;
-  }
+// Counts a join exactly once per user, and tells the caller whether this
+// was a NEW count (so it knows whether to actually send the ebook).
+async function recordJoinOnce(userId: number): Promise<boolean> {
+  const alreadyCounted = await redis.get(`counted:${userId}`);
+  if (alreadyCounted) return false;
 
   const tag = (await redis.get<string>(`source:${userId}`)) ?? "direct";
   await redis.incr("stats:total");
   await redis.incr(`stats:source:${tag}`);
-
-  // Permanent flag — dobara count na ho
-  await redis.set(`joined:${userId}`, "1");
-  console.log(`[recordJoin] userId ${userId} counted with source: ${tag}`);
+  await redis.set(`counted:${userId}`, "1"); // no expiry — never double-count
+  return true;
 }
 
 export async function POST(req: NextRequest) {
@@ -82,26 +72,8 @@ export async function POST(req: NextRequest) {
     const update = await req.json();
     console.log("[webhook] update received:", JSON.stringify(update));
 
-    // ✅ Actual channel join event — bot admin hone pe milta hai
-    if (update.my_chat_member) {
-      const member = update.my_chat_member;
-      const newStatus = member.new_chat_member?.status;
-      const oldStatus = member.old_chat_member?.status;
-      const userId = member.from.id;
-
-      const joinedNow =
-        (newStatus === "member" || newStatus === "administrator") &&
-        (oldStatus === "left" || oldStatus === "kicked");
-
-      if (joinedNow) {
-        console.log(`[webhook] user ${userId} actually joined the channel`);
-        await recordJoin(userId);
-      }
-
-      return NextResponse.json({ ok: true });
-    }
-
-    // /start command handle
+    // Someone opened the bot via the deep link (or searched it directly).
+    // Only ONE button now — no second confirmation step.
     if (update.message?.text?.startsWith("/start")) {
       const chatId = update.message.chat.id;
       const userId = update.message.from.id;
@@ -113,37 +85,36 @@ export async function POST(req: NextRequest) {
 
       await sendMessage(
         chatId,
-        "Welcome! Grab your free ebook — join our channel first, then tap the button below to confirm.",
+        "Welcome! Tap below to join our channel — your free ebook will be sent automatically the moment you join. No extra steps.",
         {
-          inline_keyboard: [
-            [{ text: "📢 Join Channel", url: CHANNEL_LINK }],
-            [{ text: "✅ I've Joined - Get Ebook", callback_data: "verify_join" }],
-          ],
+          inline_keyboard: [[{ text: "📢 Join Channel", url: CHANNEL_LINK }]],
         }
       );
       return NextResponse.json({ ok: true });
     }
 
-    // Button tap — sirf ebook delivery, counting nahi
-    if (update.callback_query) {
-      const cb = update.callback_query;
-      const chatId = cb.message.chat.id;
-      const userId = cb.from.id;
+    // Telegram's own signal that someone's membership status changed —
+    // this is what now triggers the ebook, automatically, the moment they
+    // actually join. No button tap needed.
+    if (update.chat_member) {
+      const { old_chat_member, new_chat_member } = update.chat_member;
+      const userId = new_chat_member.user.id;
 
-      if (cb.data === "verify_join") {
-        const member = await isChannelMember(userId);
-        console.log(`[webhook] isChannelMember(${userId}) =`, member);
+      const justJoined =
+        LEFT_STATUSES.includes(old_chat_member.status) &&
+        JOINED_STATUSES.includes(new_chat_member.status);
 
-        if (member) {
-          await answerCallback(cb.id, "Verified! Sending your ebook...");
-          await sendEbook(chatId);
-          // ❌ recordJoin() hata diya — counting my_chat_member se hoti hai ab
-        } else {
-          await answerCallback(
-            cb.id,
-            "You haven't joined the channel yet. Please join first!",
-            true
-          );
+      if (justJoined) {
+        console.log(`[webhook] chat_member: user ${userId} just joined the channel`);
+        const isNewJoin = await recordJoinOnce(userId);
+
+        if (isNewJoin) {
+          // Sending to their user ID works because they already started a
+          // private chat with the bot via the deep link. If someone joins
+          // the channel WITHOUT ever messaging the bot first, this send
+          // will fail (Telegram blocks bots from messaging strangers) —
+          // that failure is logged, not thrown, so it won't break anything.
+          await sendEbook(userId);
         }
       }
       return NextResponse.json({ ok: true });
