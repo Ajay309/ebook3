@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
+import { isChannelMember } from "@/lib/telegram-auth";
 import fs from "fs";
 import path from "path";
 
@@ -35,6 +36,13 @@ async function sendMessage(chatId: number, text: string, replyMarkup?: object) {
   );
 }
 
+async function answerCallback(callbackQueryId: string, text?: string, showAlert = false) {
+  return callTelegram(
+    "answerCallbackQuery",
+    JSON.stringify({ callback_query_id: callbackQueryId, text, show_alert: showAlert })
+  );
+}
+
 async function sendEbook(chatId: number) {
   if (!fs.existsSync(EBOOK_PATH)) {
     console.error(`[sendEbook] ebook.pdf NOT FOUND at ${EBOOK_PATH}`);
@@ -54,6 +62,8 @@ async function recordSource(userId: number, rawTag: string) {
   await redis.set(`source:${userId}`, tag, { ex: SOURCE_TTL_SECONDS });
 }
 
+// Idempotent — safe to call from BOTH the automatic chat_member path and the
+// manual button path without ever double-counting the same user.
 async function recordJoinOnce(
   userId: number,
   firstName: string,
@@ -66,7 +76,6 @@ async function recordJoinOnce(
   await redis.incr("stats:total");
   await redis.incr(`stats:source:${tag}`);
 
-  // User ka pura data save karo
   await redis.set(
     `counted:${userId}`,
     JSON.stringify({
@@ -87,6 +96,7 @@ export async function POST(req: NextRequest) {
     const update = await req.json();
     console.log("[webhook] update received:", JSON.stringify(update));
 
+    // Someone opened the bot via the deep link
     if (update.message?.text?.startsWith("/start")) {
       const chatId = update.message.chat.id;
       const userId = update.message.from.id;
@@ -98,14 +108,19 @@ export async function POST(req: NextRequest) {
 
       await sendMessage(
         chatId,
-        "Welcome! Tap below to join our channel — your free ebook will be sent automatically the moment you join. No extra steps.",
+        "Welcome! Grab your free ebook — join our channel first, then tap the button below to get it.\n\nTip: once you join, you may also get it automatically here without even tapping — but the button always works as a backup.",
         {
-          inline_keyboard: [[{ text: "📢 Join Channel", url: CHANNEL_LINK }]],
+          inline_keyboard: [
+            [{ text: "📢 Join Channel", url: CHANNEL_LINK }],
+            [{ text: "✅ Download Ebook", callback_data: "verify_join" }],
+          ],
         }
       );
       return NextResponse.json({ ok: true });
     }
 
+    // Automatic delivery — fires the moment Telegram confirms they joined,
+    // no button tap needed. Kept as the "no second step" primary path.
     if (update.chat_member) {
       const { old_chat_member, new_chat_member } = update.chat_member;
       const userId = new_chat_member.user.id;
@@ -122,6 +137,35 @@ export async function POST(req: NextRequest) {
 
         if (isNewJoin) {
           await sendEbook(userId);
+        }
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // Manual "Download Ebook" button — ALWAYS re-verifies real membership
+    // with Telegram's own API before sending anything. Clicking this with
+    // no join never produces a file.
+    if (update.callback_query) {
+      const cb = update.callback_query;
+      const chatId = cb.message.chat.id;
+      const userId = cb.from.id;
+      const firstName = cb.from.first_name ?? "Unknown";
+      const username = cb.from.username;
+
+      if (cb.data === "verify_join") {
+        const member = await isChannelMember(userId);
+        console.log(`[webhook] isChannelMember(${userId}) =`, member);
+
+        if (member) {
+          await answerCallback(cb.id, "Verified! Sending your ebook...");
+          await sendEbook(chatId);
+          await recordJoinOnce(userId, firstName, username); // no-op if chat_member already counted them
+        } else {
+          await answerCallback(
+            cb.id,
+            "You haven't joined the channel yet. Please join first!",
+            true
+          );
         }
       }
       return NextResponse.json({ ok: true });
